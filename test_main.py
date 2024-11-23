@@ -1,158 +1,96 @@
-import os
-import tempfile
 import unittest
-import xml.etree.ElementTree as ET
+from unittest.mock import patch, MagicMock, mock_open
 import zipfile
-from unittest.mock import mock_open, patch
+from io import StringIO
+from shell_emulator import shell_emulator
 
-from shell_emulator import ShellEmulator
 
 
 class TestShellEmulator(unittest.TestCase):
-    @patch(
-        "builtins.open",
-        new_callable=mock_open,
-        read_data="""
-    [user]
-    name = "test_user"
-    computer = "test_computer"
-    parametr = "test_param"
 
-    [paths]
-    vfs = "system.zip"
-    log = "config.xml"
-    start_script = "start.sh"
-    """,
-    )
-    def setUp(self, mock_open):
-        # Create a temp directory to mock file creation
-        self.test_dir = tempfile.TemporaryDirectory()
-        self.config_path = os.path.join(self.test_dir.name, "config.toml")
-        with open(self.config_path, "w") as f:
-            f.write("""
-            [user]
-            name = "test_user"
-            computer = "test_computer"
-            parametr = "test_param"
+    @patch("builtins.open", return_value=["name\n", "test.zip\n"])
+    @patch("zipfile.ZipFile")
+    def setUp(self, MockZipFile, mock_open):
+        # Mock ZipFile and file content
+        self.mock_zip = MagicMock()
+        MockZipFile.return_value = self.mock_zip
 
-            [paths]
-            vfs = "test.zip"
-            log = "test_log.xml"
-            start_script = "start.sh"
-            """)
+        self.shell = shell_emulator()
 
-        # Mock zip file creation
-        self.zip_path = os.path.join(self.test_dir.name, "test.zip")
-        with zipfile.ZipFile(self.zip_path, "w") as zipf:
-            zipf.writestr("folder/file1.txt", "This is a test file")
-            zipf.writestr("file2.txt", "Another file")
+    @patch.object(shell_emulator, 'create_path', return_value='/test/')
+    @patch('zipfile.Path.iterdir')
+    def test_ls(self, mock_iterdir, mock_create_path):
+        # Setup the mock to return fake file list
+        mock_iterdir.return_value = [MagicMock(name="file1"), MagicMock(name="file2")]
 
-        # Create a dummy start script
-        self.start_script_path = os.path.join(self.test_dir.name, "start.sh")
-        with open(self.start_script_path, "w") as f:
-            f.write("echo 'Running start script'\n")
+        # Capture print output
+        with patch("builtins.print") as mock_print:
+            self.shell.ls()
+            mock_print.assert_any_call("file1")
+            mock_print.assert_any_call("file2")
 
-        # Set up the paths in the mock configuration
-        self.config = {
-            "user": {
-                "name": "test_user",
-                "computer": "test_computer",
-                "parametr": "test_param",
-            },
-            "paths": {
-                "vfs": self.zip_path,
-                "log": os.path.join(self.test_dir.name, "test_log.xml"),
-                "start_script": self.start_script_path,
-            },
-        }
+    @patch.object(shell_emulator, 'create_path', return_value='/test/')
+    @patch('zipfile.Path.iterdir')
+    @patch('zipfile.Path', return_value=MagicMock())
+    def test_cd_success(self, MockPath, mock_iterdir, mock_create_path):
+        # Mock the directory change
+        mock_iterdir.return_value = [MagicMock(name="dir1"), MagicMock(name="dir2")]
+        com = ["cd", "dir1"]
 
-    def tearDown(self):
-        # Cleanup after test
-        self.test_dir.cleanup()
+        with patch("builtins.print") as mock_print:
+            self.shell.cd(com)
+            mock_print.assert_called_with(self.shell.path_obj)
 
-    @patch(
-        "toml.load",
-        return_value={
-            "user": {
-                "name": "test_user",
-                "computer": "test_computer",
-                "parametr": "test_param",
-            },
-            "paths": {
-                "vfs": "test.zip",
-                "log": "test_log.xml",
-                "start_script": "start.sh",
-            },
-        },
-    )
-    @patch("builtins.open", new_callable=mock_open, read_data="This is a start script")
-    def test_load_config(self, mock_file, mock_toml_load):
-        # Test if the config loads correctly
-        shell = ShellEmulator(self.config_path)
-        self.assertEqual(shell.username, "test_user")
-        self.assertEqual(shell.computer_name, "test_computer")
-        self.assertEqual(shell.fs_zip_path, self.zip_path)
+    @patch.object(shell_emulator, 'create_path', return_value='/test/')
+    @patch('zipfile.Path.iterdir')
+    @patch('zipfile.Path', return_value=MagicMock())
+    def test_cd_fail(self, MockPath, mock_iterdir, mock_create_path):
+        # Mock the directory that doesn't exist
+        mock_iterdir.return_value = [MagicMock(name="dir1")]
+        com = ["cd", "dir2"]
 
-    def test_load_vfs(self):
-        # Test if the virtual file system loads correctly
-        shell = ShellEmulator(self.config_path)
-        shell.load_vfs()
-        self.assertIn("/folder/file1.txt", shell.vfs)
-        self.assertEqual(shell.vfs["/folder/file1.txt"], "This is a test file")
+        with patch("builtins.print") as mock_print:
+            self.shell.cd(com)
+            mock_print.assert_called_with("No such file or directory")
 
-    def test_ls_command(self):
-        # Test ls command functionality
-        shell = ShellEmulator(self.config_path)
-        shell.load_vfs()
-        with patch("builtins.print") as mocked_print:
-            shell.ls()
-            mocked_print.assert_any_call("file2.txt")
-            mocked_print.assert_any_call("folder")
+    @patch("builtins.open", return_value=MagicMock(readlines=MagicMock(return_value=['name', 'test.zip'])))
+    @patch('zipfile.ZipFile')
+    @patch('zipfile.Path.iterdir')
+    def test_uniq(self, mock_iterdir, mock_zipfile, mock_open):
+        # Setup mock for file reading and directory listing
+        mock_iterdir.return_value = [MagicMock(name="file1")]
+        mock_file = MagicMock()
+        mock_file.readlines.return_value = ["line1", "line2", "line1"]
+        mock_zipfile.return_value.open.return_value.__enter__.return_value = mock_file
 
-    def test_cd_command(self):
-        # Test changing directories
-        shell = ShellEmulator(self.config_path)
-        shell.load_vfs()
-        shell.cd("/folder")
-        self.assertEqual(shell.current_path, "/folder")
+        # Mock the file to have duplicate lines
+        com = ["uniq", "file1"]
 
-    def test_invalid_cd_command(self):
-        # Test invalid directory change
-        shell = ShellEmulator(self.config_path)
-        shell.load_vfs()
-        with patch("builtins.print") as mocked_print:
-            shell.cd("/nonexistent")
-            mocked_print.assert_called_with("No such directory: /nonexistent")
+        with patch("builtins.print") as mock_print:
+            self.shell.uniq(com[1])
+            mock_print.assert_any_call("line1")
+            mock_print.assert_any_call("line2")
 
-    def test_logging(self):
-        # Test if logging actions work
-        shell = ShellEmulator(self.config_path)
-        shell.create_log_file()
-        shell.log_action("test_command")
-        log_tree = ET.parse(shell.log_file)
-        root = log_tree.getroot()
-        actions = root.findall("action")
-        self.assertEqual(actions[0].find("command").text, "test_command")
+    @patch.object(shell_emulator, 'create_path', return_value='/test/')
+    def test_sawed_off_path(self, mock_create_path):
+        # Test sawed_off_path
+        self.shell.path = '/test/dir1/dir2/'
+        result = self.shell.sawed_off_path(self.shell.path)
+        self.assertEqual(result, '/test/dir1/')
 
-    def test_whoami_command(self):
-        # Test whoami command
-        shell = ShellEmulator(self.config_path)
-        with patch("builtins.print") as mocked_print:
-            shell.whoami()
-            mocked_print.assert_called_with("test_user")
+    def test_create_path(self):
+        # Test create_path with different cases
+        self.assertEqual(self.shell.create_path("test"), "/test/")
+        self.assertEqual(self.shell.create_path("/test"), "/test/")
+        self.assertEqual(self.shell.create_path("test/"), "/test/")
 
-    @patch("builtins.input", side_effect=["whoami", "exit"])
     @patch("builtins.print")
-    def test_shell_run(self, mock_print, mock_input):
-        # Test shell run loop
-        shell = ShellEmulator(self.config_path)
-        with patch(
-                "shell_emulator.ShellEmulator.exit_shell", side_effect=SystemExit
-        ) as mock_exit:
-            with self.assertRaises(SystemExit):
-                shell.run()
-            mock_print.assert_any_call("test_user@test_computer:/$ ")
-            mock_print.assert_any_call("test_user")
+    def test_main_loop_exit(self, mock_print):
+        # Test the shell exit functionality
+        with patch("builtins.input", return_value="exit"):
+            with patch("sys.exit") as mock_exit:
+                self.shell.main_loop()
+                mock_exit.assert_called_once()
 
 
 if __name__ == "__main__":

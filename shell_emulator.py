@@ -1,85 +1,94 @@
 import zipfile
 from zipfile import ZipFile
 
-def sawed_off_path(path):
-    path = create_path(path)
-    path = path[:-1]
 
-    for i in range(len(path) - 1, -1, -1):
-        if path[i] == "/":
-            return path
-        path = path[:-1]
-    return path
-def create_path(path):
-    if path == "":
-        return "/"
-    if path[-1] != "/":
-        path = path + "/"
-    if path[0] != "/":
-        path = "/" + path
-    return path
+class shell_emulator:
+    def __init__(self):
+        file =  open("config.xml", "r").readlines()
+        self.name = file[0].strip()
+        self.system = ZipFile(file[1].strip())
+        self.system_name = file[1].strip()
+        self.path_obj = zipfile.Path(self.system, at="/")
+        self.path = self.path_obj.name
 
-def ShellEmulator(config):
-    file = open("config.xml").readlines()
-    name = file[0][:-1]
-    system = ZipFile(file[1])
-    path_obj = zipfile.Path(file[1], at="/")
-    path = path_obj.name
-    com = input("<" + name + ": " + create_path(path) + "># ").split(" ")
+    def sawed_off_path(self, path):
+        path = self.create_path(path)
+        self.path = path[:-1]
 
+        for i in range(len(self.path) - 1, -1, -1):
+            if self.path[i] == "/":
+                return self.path
+            self.path = self.path[:-1]
+        return self.path
 
-    def ls():
-        file = list(path_obj.iterdir())
-        for i in file:
-            print(i.name)
+    def create_path(self, path):
+        if path == "":
+            return "/"
+        if path[-1] != "/":
+            path = path + "/"
+        if path[0] != "/":
+            path = "/" + path
+        return path
 
+    def ls(self):
+        files = list(self.path_obj.iterdir())
+        for file in files:
+            print(file.name)
 
-    def cd():
-        nonlocal path_obj
-        if com[1] == ".." or com[1] == "../":
-            path_obj = zipfile.Path(file[1], create_path(sawed_off_path(path))[1:])
-            print(path_obj)
+    def cd(self, com):
+        path = com[1]
+
+        if path == ".." or path == "../":
+            self.path_obj = zipfile.Path(self.system, self.sawed_off_path(self.path)[1:])
+            print(self.path_obj)
             return
-        elif not (create_path(com[1]) in list(create_path(i.name) for i in list(path_obj.iterdir()))):
-            print(path + create_path(com[1])[1:], ": ", end="")
-            print("No such file or directory")
-            return
-        path_obj = zipfile.Path(file[1], path[1:] + create_path(com[1])[1:])
-        #print(path_obj)
+        else:
+            new_path = self.create_path(path)
+            if not any(self.create_path(i.name) == new_path for i in self.path_obj.iterdir()):
+                print(f"{new_path}: No such file or directory")
+                return
+            self.path_obj = zipfile.Path(self.system, new_path[1:])  # Adjust path
+            print(self.path_obj)
 
-    def uniq(filename):
-        if not (create_path(filename) in list(create_path(i.name) for i in list(path_obj.iterdir()))):
-            print(path + com[1], ": ", end="")
-            print("No such file or directory")
+    def uniq(self, filename):
+        file_path = self.create_path(filename)
+
+        if not any(self.create_path(i.name) == file_path for i in self.path_obj.iterdir()):
+            print(f"{file_path}: No such file or directory")
             return
 
         unique_lines = set()
 
-        with system.open(path[1:] + filename, 'r') as file:
+        with self.system.open(file_path[1:], 'r') as file:
             for line in file.readlines():
                 unique_lines.add(line.strip())
 
-            for line in unique_lines:
-                print(line)
+        for line in unique_lines:
+            print(line)
+
+
+if __name__ == '__main__':
+    shell = shell_emulator()
 
     while True:
         try:
+            com = input(f"<{shell.name}: {shell.create_path(shell.path)}># ").split(" ")
+
             if com[0] == "ls":
-                ls()
+                shell.ls()
             elif com[0] == "cd" and len(com) == 2:
-                cd()
+                shell.cd(com)
             elif com[0] == "tree":
-                system.printdir()
+                shell.system.printdir()
             elif com[0] == "echo" and len(com) == 2:
                 print(com[1])
             elif com[0] == "uniq" and len(com) == 2:
-                uniq(com[1])
+                shell.uniq(com[1])
             elif com[0] == "exit":
-                return
-            path = create_path(str(path_obj)[len(file[1]):])
-            com = input("<" + name + ": " + create_path(path) + "># ").split(" ")
+                break
+
+            # Update the current path based on the shell's path object
+            shell.path = shell.create_path(str(shell.path_obj)[len(shell.system_name):])
+
         except KeyboardInterrupt:
             break
-
-if __name__ == '__main__':
-    ShellEmulator()
